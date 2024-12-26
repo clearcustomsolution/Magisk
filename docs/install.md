@@ -1,120 +1,156 @@
 # Installation
-If you already have Magisk installed, it is **strongly recommended to upgrade directly via Magisk Manager**. The following tutorial is for first time users.
 
-- If you are using a Huawei device running **EMUI 8 and higher**, please check its own section.
-- If you are using a Samsung device that is **launched with Android 9.0** (new devices in 2019), please check its own section.
+If you already have Magisk installed, it is **strongly recommended** to upgrade directly via the Magisk app using its "Direct Install" method. The following tutorial is only for the initial installation.
 
-## Prerequisite
-- If you plan to install custom kernels, flash the zip **AFTER** installing Magisk
-- Make sure to remove any 'boot image mods' such as other root solutions. The easiest way is to restore the boot image from factory images, or reflash a *non-prerooted* custom ROM
+## Getting Started
 
-## Custom Recovery
-If your device have custom recovery support, the easiest way is to install it through custom recoveries, such as TWRP.
+Before you start:
 
-- Download the Magisk installer zip
-- Reboot to custom recovery
-- Flash the zip and reboot
-- Check whether Magisk Manager is installed. If for some reason it isn't installed automatically, manually install the APK
+- This tutorial assumes you understand how to use `adb` and `fastboot`
+- If you plan to also install custom kernels, install it after Magisk
+- Your device's bootloader has to be unlocked
 
-## Boot Image Patching
-This is the "cool" way to install Magisk on your device. Either your device does not have proper custom recoveries, your device is using the A/B partition scheme and you don't want to mix recovery and boot images together, or you have other concerns (e.g. [OTA Installation](tutorials.md#ota-installation)), you should use this method instead.
+---
 
-In order to use this method, you are required to obtain a copy of the stock boot image, which can be found by extracting OEM provided factory images or extracting from OTA update zips. If you are unable to obtain one yourself, someone on the Internet might share it somewhere. The following instructions will guide you through the process after you have the copy of boot image.
+Download and install the latest [Magisk app](https://github.com/topjohnwu/Magisk/releases/latest). In the home screen, you should see:
 
-- Copy the boot image to your device
-- Download and install the latest Magisk Manager
-- Press **Install → Install → Select and Patch a File**, and select your stock boot image file
-- Magisk Manager will install Magisk to your boot image, and store it in `[Internal Storage]/Download/magisk_patched.img`
-- Copy the patched boot image from your device to your PC. If you can't find it via MTP, you can pull the file with ADB: <br>
-`adb pull /sdcard/Download/magisk_patched.img`
-- Flash the patched boot image to your device and reboot. Here is the command if using fastboot on most devices: <br>
-`fastboot flash boot /path/to/magisk_patched.img`
+<p align="center"><img src="images/device_info.png" width="500"/></p>
+
+The result of **Ramdisk** determines whether your device has ramdisk in the boot partition. If your device does not have boot ramdisk, read the [Magisk in Recovery](#magisk-in-recovery) section before continuing.
+
+> _(Unfortunately, there are exceptions as some devices' bootloader accepts ramdisk even if it shouldn't. In this case, you will have to follow the instructions as if your device's boot partition **does** include ramdisk. There is no way to detect this, so the only way to know for sure is to actually try. Fortunately, as far as we know, only some Xiaomi devices are known to have this property, so most people can simply ignore this piece of information.)_
+
+If you are using a Samsung device, you can now jump to [its own section](#samsung-devices).
+
+If your device has boot ramdisk, get a copy of the `boot.img` (or `init_boot.img` if exists).<br>
+If your device does **NOT** have boot ramdisk, get a copy of the `recovery.img`.<br>
+You should be able to extract the file you need from official firmware packages or your custom ROM zip.
+
+Quick recap, at this point, you should have known and prepared:
+
+1. Whether your device has boot ramdisk
+2. A `boot.img`, `init_boot.img` or `recovery.img` based on (1)
+
+Let's continue to [Patching Images](#patching-images).
+
+## Patching Images
+
+- Copy the boot/init_boot/recovery image to your device
+- Press the **Install** button in the Magisk card
+- If you are patching a recovery image, check the **"Recovery Mode"** option
+- Choose **"Select and Patch a File"** in method, and select the boot/init_boot/recovery image
+- Start the installation, and copy the patched image to your PC using ADB:<br>
+  `adb pull /sdcard/Download/magisk_patched_[random_strings].img`
+- Flash the patched boot/init_boot/recovery image to your device;<br>
+  for most devices, reboot into fastboot mode and flash with command:<br>
+  `fastboot flash boot /path/to/magisk_patched_[random_strings].img` or <br>
+  `fastboot flash init_boot /path/to/magisk_patched_[random_strings].img` or <br>
+  `fastboot flash recovery /path/to/magisk_patched_[random_strings].img` <br>
+- (Optional) If your device has a separate `vbmeta` partition, you can patch the `vbmeta` partition with command:<br>
+  `fastboot flash vbmeta --disable-verity --disable-verification vbmeta.img` (note that it may **wipe your data**)
+- Reboot and launch Magisk app (you will see a stub Magisk app if you have wiped your data; use it to bootstrap to a complete Magisk app), and you will see a prompt asking for environment fix; click and wait for the reboot
+- Voila!
+
+> Warning: **NEVER** flash patched image shared by others or patch image on another device even if they have the same device model! You may need to do a full data wipe to recover your device. **ALWAYS** patch boot image **on the same device where you want to install Magisk**.
+
+## Uninstallation
+
+The easiest way to uninstall Magisk is directly through the Magisk app. If you insist on using custom recoveries, rename the Magisk APK to `uninstall.zip` and flash it like any other ordinary flashable zip.
 
 ## Magisk in Recovery
-Due to the fact that some devices no longer uses ramdisk in boot images, Magisk has no choice but to be installed in the recovery partition. For these devices, you will have to **boot to recovery every time** if you want Magisk. Since both Magisk and recovery lives in the same partition, what you actually end up getting when you choose to boot to recovery will be determined by **how long you press volume up**.
 
-Each OEM has its own key combo to boot into recovery. For example on Samsung it is **(Power + Bixby + Volume Up)**, and for Huawei it is **(Power + Volume Up)**. As soon as you press the combo and the device vibrates with a splash screen, the bootloader has already chosen which mode it is booting, either it be `boot`, `recovery`, or some OEM specific modes like `download`, `fastboot`, or `erecovery`. After the splash screen, release all buttons to boot into Magisk, since by default `recovery` mode will boot to the system with Magisk enabled. If you decide to boot to actual recovery, continue to press volume up until you see the recovery screen.
+In the case when your device does not have ramdisk in boot images, Magisk has no choice but to hijack the recovery partition. For these devices, you will have to **reboot to recovery** every time you want Magisk enabled.
 
-**In summary, after installing Magisk:**
-- **(Powering up normally) → (System with NO Magisk)**
-- **(OEM Recovery Key Combo) → (Splash screen) → (Release all buttons) → (System with Magisk)**
-- **(OEM Recovery Key Combo) → (Splash screen) → (Keep pressing volume up) → (Actual recovery)**
+When Magisk hijacks the recovery, there is a special mechanism to allow you to _actually_ boot into recovery mode. Each device model has its own key combo to boot into recovery, as an example for Galaxy S10 it is (Power + Bixby + Volume Up). A quick search online should easily get you this info. As soon as you press the key combo and the device vibrates with a splash screen, release all buttons to boot into Magisk. If you decide to boot into the actual recovery mode, **long press volume up until you see the recovery screen**.
 
-## Samsung (System-as-root)
-**If your device is NOT launched with Android 9.0 or higher (released after 2019), follow the normal tutorial**
+As a summary, after installing Magisk in recovery **(starting from power off)**:
 
-### Before Installing Magisk
-- Installing Magisk **WILL** trip KNOX
-- Installing Magisk for the first time **REQUIRES** a full data wipe, backup before continue
-- You have to have your bootloader unlocked before following the instructions
-- Magisk will be installed to the **recovery** partition of your device. **Please read the Magisk in Recovery section before following the instructions below!**
-- After installing Magisk, you can directly upgrade Magisk within Magisk Manager without an issue. **Flashing in custom recovery is not supported for now.**
+- **(Power up normally) → (System with NO Magisk)**
+- **(Recovery Key Combo) → (Splash screen) → (Release all buttons) → (System with Magisk)**
+- **(Recovery Key Combo) → (Splash screen) → (Long press volume up) → (Recovery Mode)**
 
-### Unlocking Bootloader
-Normally I won't provide instructions for this, but since things had changed drastically from previous Samsung devices, and there are some details that many might not know, I figure this would be helpful.
-- Allow bootloader unlocking in Developer options → OEM unlocking
-- Power off your device. Press *Bixby + Volume Down* and plug in your device to a PC to boot into download mode
+(Note: You **CANNOT** use custom recoveries to install or upgrade Magisk in this case!!)
+
+## Samsung Devices
+
+Before proceeding, please acknowledge that:
+
+- Installing Magisk **WILL** trip your Knox Warranty Bit, this action is not reversible in any way.
+- Installing Magisk for the first time **REQUIRES** a full data wipe (this is **NOT** counting the data wipe when unlocking bootloader). Please make a backup your data.
+
+### Flashing Tools
+
+- [Samsung Odin3](https://dl2018.sammobile.com/Odin.zip) (Windows only) (requires [Samsung USB Drivers](https://developer.samsung.com/android-usb-driver))
+- [Samsung Odin4](https://forum.xda-developers.com/t/official-samsung-odin-v4-1-2-1-dc05e3ea-for-linux.4453423/) (Linux only)
+- [Heimdall](https://www.glassechidna.com.au/heimdall/) (or [Grimler's fork](https://git.sr.ht/~grimler/Heimdall))
+
+### Requirements
+
+To verify whether or not Magisk can be installed in your Samsung device, you first must check the OEM Lock and KnoxGuard (RMM) status, to do so boot your device in Download mode with its key combo.
+
+Possible OEM Lock values are the following:
+- **ON (L)**: fully locked.
+- **ON (U)**: bootloader locked, OEM unlocking enabled.
+- **OFF (U)**: fully unlocked.
+
+To unlock your bootloader, follow the instructions below. If no OEM Lock value is shown in Download mode, your device is probably not unlockable due to market limitations (USA/Canada devices).
+
+Possible KnoxGuard values are the following:
+
+- `Active`, `Locked`: your device has been remotely locked by your telecom operator or your insurance company.
+- `Prenormal`: your device is temporarily locked, reaching 168h of uptime should trigger unlock.
+- `Checking`, `Completed`, `Broken`: your device is unlocked.
+
+Having KnoxGuard active will prevent you from installing/running Magisk regardless of your bootloader lock state.
+
+### Unlocking the bootloader
+
+- Allow bootloader unlocking in **Developer options → OEM unlocking**
+- Reboot to download mode: power off your device and press the download mode key combo for your device
 - Long press volume up to unlock the bootloader. **This will wipe your data and automatically reboot.**
-
-Just when you think the bootloader is unlocked, surprise surprise, it is *actually* not! Samsung introduced `VaultKeeper` in the system, meaning the bootloader will reject any unofficial partitions before `VaultKeeper` explicitly allows it.
-
-- Go through the initial setup. Skip through all the steps since data will be wiped again later when we are installing Magisk. **Connect the device to internet in the setup!**
-- Enable developer options, and **confirm that the OEM unlocking option exists and grayed out!** The `VaultKeeper` service will unleash the bootloader after it confirms that the user has the OEM unlocking option enabled. This step is to simply make sure the service gets the correct info, and also double check that our device is in a correct state
-- Your bootloader now accepts unofficial images in download mode.
+- Go through the initial setup. Skip through all the steps since data will be wiped again in later steps. **Connect the device to Internet during the setup.**
+- Enable developer options, and **confirm that the OEM unlocking option exists and is grayed out.** This means KnoxGuard hasn't locked your device.
+- Your bootloader now accepts unofficial images in download mode
 
 ### Instructions
-1. Download the firmware for your device.
-2. Unzip the firmware and copy the **AP** tar file to your device. It is normally named as `AP_[device_model_sw_ver].tar.md5`
-3. Install the latest Magisk Manager
-4. In Magisk Manager: **Install → Install → Select and Patch a File** and select the AP tar file.
-5. Magisk Manager will patch the whole firmware file and store the output to
-`[Internal Storage]/Download/magisk_patched.tar`
-6. Copy the tar file to your PC (using `adb`: some people report corruption using MTP), and boot your device to download mode.
-7. Flash `magisk_patched.tar` as AP in ODIN, together with the BL, CP and HOME_CSC files. Never flash only an AP file, as Odin can shrink your `/data` file-system if you do.<br> **Important: Uncheck "Auto Reboot" in Options!**
-8. Magisk is now successfully flashed to your device! But there are still several steps before you can properly use the device.
-9. We now want to boot into the stock recovery to factory reset our device. <br>
-**Full data wipe is mandatory! Do not skip this step.** <br>
-Press *Power + Volume Down* to exit download mode. As soon as the screen turns off, immediately press *Power + Bixby + Volume Up* to boot to recovery partition. Just as mentioned in the previous section, since we want to boot into stock recovery, **continue pressing the volume up button until you see the stock recovery screen**.
-10. In the stock recovery menu, use volume buttons to navigate through menus, and the power button to select the option. Select *Wipe data/factory reset* to wipe the data of the device.
-11. This time, we can finally boot to the system with Magisk. Select *Reboot system now*, and immediately press *Power + Bixby + Volume Up*. After seeing the bootloader warning screen, release all buttons so it can boot to the system.
-12. The device will automatically reboot for the first time it boots. This is completely normal and done by design.
-13. After the device is booted up, do the usual initial setup. **The following steps will need internet connection.**
-14. You shall see Magisk Manager in your app drawer; if not, manually install the APK you downloaded in step 3 and continue to the next step. The app would be a stub and it shall automatically upgrade to the full Magisk Manager when you open it.
-15. Magisk Manager will ask to do additional setups. Let it do its job and the app will automatically reboot your device.
-16. Voila! Enjoy Magisk :)
 
-### Additional Info
-- Magisk actually patches 3 partitions on your device:
-    - `vbmeta`: replace with empty vbmeta image to disable partition verification
-    - `boot`: remove the signature of the image to prevent soft bricks
-    - `recovery`: this is where Magisk is actually installed
-- **Never, ever** try to restore either of the 3 images mentioned back to stock! You can easily brick your device by doing so, and the only way out is to do full ODIN restore following with factory reset. Just don't do it.
-- If you want to upgrade your device, **never** flash the stock **AP** tar file with reasons mentioned above. **Always** pre-patch the firmware before flashing in ODIN.
--  If you don't need to patch the full firmware, you can manually create a tar file with **at least** `vbmeta.img`, `boot.img`, and `recovery.img` to let Magisk Manager patch your images in the proper way.
+- Download the latest firmware package for your device, you can use one of the tools below to download it directly from Samsung servers:
+  - [SamFirm.NET](https://github.com/jesec/SamFirm.NET), [samfirm.js](https://github.com/jesec/samfirm.js)
+  - [Frija](https://forum.xda-developers.com/s10-plus/how-to/tool-frija-samsung-firmware-downloader-t3910594)
+  - [Samloader](https://forum.xda-developers.com/s10-plus/how-to/tool-samloader-samfirm-frija-replacement-t4105929)
+  - [Bifrost](https://forum.xda-developers.com/t/tool-samsung-samsung-firmware-downloader.4240719/)
+- Unzip the firmware and copy the `AP` tar file to your device. It is normally named as `AP_[device_model_sw_ver].tar.md5`
+- Press the **Install** button in the Magisk card
+- If your device does **NOT** have boot ramdisk, check the **"Recovery Mode"** option
+- Choose **"Select and Patch a File"** in method, and select the `AP` tar file
+- Start the installation, and copy the patched tar file to your PC using ADB:<br>
+  `adb pull /sdcard/Download/magisk_patched_[random_strings].tar`<br>
+  **DO NOT USE MTP** as it is known to corrupt large files.
+- Reboot to download mode. Open Odin on your PC, and flash `magisk_patched.tar` as `AP`, together with `BL`, `CP`, and `CSC` (**NOT** `HOME_CSC` because we want to **wipe data**) from the original firmware.
+- Your device should reboot automatically once Odin finished flashing. **Agree to do a factory reset if asked.**
+- If your device does **NOT** have boot ramdisk, reboot to recovery now to enable Magisk (reason stated in [Magisk in Recovery](#magisk-in-recovery)).
+- Install the Magisk app you've already downloaded and launch the app. It should show a dialog asking for additional setup.
+- Let the app do its job and automatically reboot the device. Voila!
 
-## Huawei
-Huawei devices using Kirin processors have a different partitioning method from most common devices. Magisk is usually installed to the `boot` partition of the device, however Huawei devices does not have this partition. Depending on what EMUI version your device is running, the instructions will be slightly different.
+### Upgrading the OS
 
-### Obtain Stock Images
-Huawei does not release official factory images, however most firmware zips can be downloaded from the [Huawei Firmware Database](http://pro-teammt.ru/firmware-database/). To extract images from `UPDATE.APP` in the zip, you have to use [Huawei Update Extractor](https://forum.xda-developers.com/showthread.php?t=2433454) (Windows only!)
+Once you have rooted your Samsung device, you can no longer upgrade your Android OS through OTA. To upgrade your device's OS, you have to manually download the new firmware zip file and go through the same `AP` patching process written in the previous section. **The only difference here is in the Odin flashing step: do NOT use the `CSC` tar, but instead use the `HOME_CSC` tar as we are performing an upgrade, not the initial install**.
 
-### EMUI 8
-For EMUI 8 devices, your device have a partition named `ramdisk`, which is where Magisk is going to be installed.
+### Important Notes
 
-- If you plan to use custom recoveries, simply follow the instructions for custom recovery and you're all set.
-- If you plan not to use custom recoveries, you will have to extract `RAMDISK.img` from your firmware. Follow the instructions for boot image patching above, but use the `RAMDISK.img` file instead of a boot image.
-- To flash the patched image to your device, here is the fastboot command: <br>
-`fastboot flash ramdisk /path/to/magisk_patched.img` <br>
-Be aware you are flashing to `ramdisk`, not `boot`!
+- **Never, ever** try to restore either `boot`, `init_boot`, `recovery`, or `vbmeta` partitions back to stock! You can brick your device by doing so, and the only way to recover from this is to do a full Odin restore with data wipe.
+- To upgrade your device with a new firmware, **NEVER** directly use the stock `AP` tar file with reasons mentioned above. **Always** patch `AP` in the Magisk app and use that instead.
 
-### EMUI 9 or Higher
-For EMUI 9+ devices, the `ramdisk` partition no longer exists. As a workaround, Magisk will be installed to the `recovery_ramdisk` partition. **Please read the Magisk in Recovery section before following the instructions below!**
+## Custom Recovery
 
-*Note: As I tested on my Honor View 10, Huawei's kernel does not seem to be able to capture key button press events in early boot, so long pressing Volume Up does **NOT** boot to recovery on my device. Your experience may vary.*
+> **This installation method is deprecated and is maintained with minimum effort. YOU HAVE BEEN WARNED!**
 
-- If you plan to use custom recoveries, simply follow the instructions for custom recovery and you're all set. <br>
-**Warning: Magisk will overwrite the custom recovery.**
-- If you plan not to use custom recoveries, you will have to extract `RECOVERY_RAMDIS.img` from your firmware. Follow the instructions for boot image patching above, but use the `RECOVERY_RAMDIS.img` file instead of a boot image.
-- To flash the patched image to your device, here is the fastboot command: <br>
-`fastboot flash recovery_ramdisk /path/to/magisk_patched.img` <br>
-Be aware you are flashing to `recovery_ramdisk`, not `boot`!
+Installing using custom recoveries is only possible if your device has boot ramdisk. Installing Magisk through custom recoveries on modern devices is no longer recommended. If you face any issues, please use the [Patch Image](#patching-images) method.
+
+- Download the Magisk APK
+- Rename the `.apk` file extension to `.zip`, for example: `Magisk-v24.0.apk` → `Magisk-v24.0.zip`. If you have trouble renaming the file extension (like on Windows), use a file manager on Android or the one included in the custom recovery to rename the file.
+- Flash the zip just like any other ordinary flashable zip.
+- Reboot and check whether the Magisk app is installed. If it isn't installed automatically, manually install the APK.
+- Launch the Magisk app; it will show a dialog asking for reinstallation. Do the reinstallation **directly within the app** and reboot (if you are using MTK devices that lock the boot partition after boot, please [patch the boot image](#patching-images) and flash it by custom recovery or fastboot).
+
+> Warning: the `sepolicy.rule` file of modules may be stored in the `cache` partition. DO NOT WIPE THE `CACHE` PARTITION.
