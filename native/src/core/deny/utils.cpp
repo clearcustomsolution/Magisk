@@ -8,8 +8,9 @@
 
 #include <consts.hpp>
 #include <base.hpp>
-#include <db.hpp>
+#include <sqlite.hpp>
 #include <core.hpp>
+#include <selinux.hpp>
 
 #include "deny.hpp"
 
@@ -108,12 +109,11 @@ static bool proc_name_match(int pid, string_view name) {
 
 bool proc_context_match(int pid, string_view context) {
     char buf[PATH_MAX];
-    sprintf(buf, "/proc/%d/attr/current", pid);
-    if (auto fp = open_file(buf, "re")) {
-        fgets(buf, sizeof(buf), fp.get());
-        if (str_starts(buf, context)) {
-            return true;
-        }
+    char con[1024];
+
+    sprintf(buf, "/proc/%d", pid);
+    if (lgetfilecon(buf, { con, sizeof(con) }) >= 0) {
+        return str_starts(con, context);
     }
     return false;
 }
@@ -201,7 +201,7 @@ void scan_deny_apps() {
             LOGI("denylist rm: [%s]\n", it->first.data());
             ssprintf(sql, sizeof(sql), "DELETE FROM denylist WHERE package_name='%s'",
                      it->first.data());
-            db_exec(sql).check_err();
+            db_exec(sql);
             it = pkg_to_procs.erase(it);
         } else {
             update_app_id(app_id, it->first, false);
@@ -222,11 +222,20 @@ static bool ensure_data() {
     LOGI("denylist: initializing internal data structures\n");
 
     default_new(pkg_to_procs_);
-    auto res = db_exec("SELECT * FROM denylist", [](db_row &row) -> bool {
-        add_hide_set(row["package_name"].data(), row["process"].data());
-        return true;
+    bool res = db_exec("SELECT * FROM denylist", {}, [](StringSlice columns, const DbValues &values) {
+        const char *package_name;
+        const char *process;
+        for (int i = 0; i < columns.size(); ++i) {
+            const auto &name = columns[i];
+            if (name == "package_name") {
+                package_name = values.get_text(i);
+            } else if (name == "process") {
+                process = values.get_text(i);
+            }
+        }
+        add_hide_set(package_name, process);
     });
-    if (res.check_err())
+    if (!res)
         goto error;
 
     default_new(app_id_to_pkgs_);
@@ -263,7 +272,7 @@ static int add_list(const char *pkg, const char *proc) {
     char sql[4096];
     ssprintf(sql, sizeof(sql),
             "INSERT INTO denylist (package_name, process) VALUES('%s', '%s')", pkg, proc);
-    return db_exec(sql).check_err() ? DenyResponse::ERROR : DenyResponse::OK;
+    return db_exec(sql) ? DenyResponse::OK : DenyResponse::ERROR;
 }
 
 int add_list(int client) {
@@ -307,7 +316,7 @@ static int rm_list(const char *pkg, const char *proc) {
     else
         ssprintf(sql, sizeof(sql),
                 "DELETE FROM denylist WHERE package_name='%s' AND process='%s'", pkg, proc);
-    return db_exec(sql).check_err() ? DenyResponse::ERROR : DenyResponse::OK;
+    return db_exec(sql) ? DenyResponse::OK : DenyResponse::ERROR;
 }
 
 int rm_list(int client) {
@@ -361,7 +370,7 @@ int enable_deny() {
 
         denylist_enforced = true;
 
-        if (!zygisk_enabled) {
+        if (!MagiskD::Get().zygisk_enabled()) {
             if (new_daemon_thread(&logcat)) {
                 denylist_enforced = false;
                 return DenyResponse::ERROR;
@@ -376,7 +385,7 @@ int enable_deny() {
         }
     }
 
-    set_db_settings(DENYLIST_CONFIG, true);
+    MagiskD::Get().set_db_setting(DbEntryKey::DenylistConfig, true);
     return DenyResponse::OK;
 }
 
@@ -384,15 +393,13 @@ int disable_deny() {
     if (denylist_enforced.exchange(false)) {
         LOGI("* Disable DenyList\n");
     }
-    set_db_settings(DENYLIST_CONFIG, false);
+    MagiskD::Get().set_db_setting(DbEntryKey::DenylistConfig, false);
     return DenyResponse::OK;
 }
 
 void initialize_denylist() {
     if (!denylist_enforced) {
-        db_settings dbs;
-        get_db_settings(dbs, DENYLIST_CONFIG);
-        if (dbs[DENYLIST_CONFIG])
+        if (MagiskD::Get().get_db_setting(DbEntryKey::DenylistConfig))
             enable_deny();
     }
 }
@@ -421,4 +428,13 @@ bool is_deny_target(int uid, string_view process) {
         }
     }
     return false;
+}
+
+void update_deny_flags(int uid, rust::Str process, uint32_t &flags) {
+    if (is_deny_target(uid, { process.begin(), process.end() })) {
+        flags |= +ZygiskStateFlags::ProcessOnDenyList;
+    }
+    if (denylist_enforced) {
+        flags |= +ZygiskStateFlags::DenyListEnforced;
+    }
 }

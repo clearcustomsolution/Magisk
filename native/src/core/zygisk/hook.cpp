@@ -1,4 +1,5 @@
 #include <sys/mount.h>
+#include <sys/resource.h>
 #include <dlfcn.h>
 #include <unwind.h>
 #include <span>
@@ -215,9 +216,15 @@ DCL_HOOK_FUNC(static int, pthread_attr_destroy, void *target) {
 
 // -----------------------------------------------------------------
 
+static size_t get_fd_max() {
+    rlimit r{32768, 32768};
+    getrlimit(RLIMIT_NOFILE, &r);
+    return r.rlim_max;
+}
+
 ZygiskContext::ZygiskContext(JNIEnv *env, void *args) :
     env(env), args{args}, process(nullptr), pid(-1), flags(0), info_flags(0),
-    hook_info_lock(PTHREAD_MUTEX_INITIALIZER) { g_ctx = this; }
+    allowed_fds(get_fd_max()), hook_info_lock(PTHREAD_MUTEX_INITIALIZER) { g_ctx = this; }
 
 ZygiskContext::~ZygiskContext() {
     // This global pointer points to a variable on the stack.

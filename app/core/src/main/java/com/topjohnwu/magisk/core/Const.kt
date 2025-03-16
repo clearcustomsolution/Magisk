@@ -14,7 +14,7 @@ object Const {
         else Build.SUPPORTED_32_BIT_ABIS.firstOrNull()
 
     // Paths
-    const val MAGISK_PATH  = "/data/adb/modules"
+    const val MODULE_PATH  = "/data/adb/modules"
     const val TMPDIR = "/dev/tmp"
     const val MAGISK_LOG = "/cache/magisk.log"
 
@@ -28,6 +28,7 @@ object Const {
 
         fun atLeast_24_0() = Info.env.versionCode >= 24000 || isCanary()
         fun atLeast_25_0() = Info.env.versionCode >= 25000 || isCanary()
+        fun atLeast_28_0() = Info.env.versionCode >= 28000 || isCanary()
         fun isCanary() = isCanary(Info.env.versionCode)
 
         fun isCanary(ver: Int) = ver > 0 && ver % 100 != 0

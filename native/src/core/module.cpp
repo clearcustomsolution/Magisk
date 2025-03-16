@@ -51,13 +51,14 @@ bool dir_node::prepare() {
     for (auto it = children.begin(); it != children.end();) {
         // We also need to upgrade to tmpfs node if any child:
         // - Target does not exist
-        // - Source or target is a symlink (since we cannot bind mount symlink)
+        // - Source or target is a symlink (since we cannot bind mount symlink) or whiteout
         bool cannot_mnt;
         if (struct stat st{}; lstat(it->second->node_path().data(), &st) != 0) {
-            cannot_mnt = true;
+            // if it's a whiteout, we don't care if the target doesn't exist
+            cannot_mnt = !it->second->is_wht();
         } else {
             it->second->set_exist(true);
-            cannot_mnt = it->second->is_lnk() || S_ISLNK(st.st_mode);
+            cannot_mnt = it->second->is_lnk() || S_ISLNK(st.st_mode) || it->second->is_wht();
         }
 
         if (cannot_mnt) {
@@ -85,7 +86,7 @@ bool dir_node::prepare() {
     return upgrade_to_tmpfs;
 }
 
-void dir_node::collect_module_files(const char *module, int dfd) {
+void dir_node::collect_module_files(std::string_view module, int dfd) {
     auto dir = xopen_dir(xopenat(dfd, name().data(), O_RDONLY | O_CLOEXEC));
     if (!dir)
         return;
@@ -107,6 +108,14 @@ void dir_node::collect_module_files(const char *module, int dfd) {
                 node->collect_module_files(module, dirfd(dir.get()));
             }
         } else {
+            if (entry->d_type == DT_CHR) {
+                struct stat st{};
+                int ret = fstatat(dirfd(dir.get()), entry->d_name, &st, AT_SYMLINK_NOFOLLOW);
+                if (ret == 0 && st.st_rdev == 0) {
+                    // if the file is a whiteout, mark it as such
+                    entry->d_type = DT_WHT;
+                }
+            }
             emplace<module_node>(entry->d_name, module, entry);
         }
     }
@@ -136,7 +145,13 @@ void node_entry::create_and_mount(const char *reason, const string &src, bool ro
 }
 
 void module_node::mount() {
-    std::string path = module + (parent()->root()->prefix + node_path());
+    if (is_wht()) {
+        VLOGD("delete", "null", node_path().data());
+        return;
+    }
+    std::string path{module.begin(), module.end()};
+    path += parent()->root()->prefix;
+    path += node_path();
     string mnt_src = module_mnt + path;
     {
         string src = MODULEROOT "/" + path;
@@ -218,10 +233,21 @@ private:
 };
 
 static void inject_magisk_bins(root_node *system) {
-    auto bin = system->get_child<inter_node>("bin");
+    dir_node* bin = system->get_child<inter_node>("bin");
     if (!bin) {
-        bin = new inter_node("bin");
-        system->insert(bin);
+        struct stat st{};
+        bin = system;
+        for (auto &item: split(getenv("PATH"), ":")) {
+            item.erase(0, item.starts_with("/system/") ? 8 : 1);
+            auto system_path = "/system/" + item;
+            if (stat(system_path.data(), &st) == 0 && st.st_mode & S_IXOTH) {
+                for (const auto &dir: split(item, "/")) {
+                    auto node = bin->get_child<inter_node>(dir);
+                    bin = node ? node : bin->emplace<inter_node>(dir, dir.data());
+                }
+                break;
+            }
+        }
     }
 
     // Insert binaries
@@ -254,9 +280,7 @@ static void inject_zygisk_libs(root_node *system) {
     }
 }
 
-vector<module_info> *module_list;
-
-void load_modules() {
+static void load_modules(bool zygisk_enabled, const rust::Vec<ModuleInfo> &module_list) {
     node_entry::module_mnt =  get_magisk_tmp() + "/"s MODULEMNT "/";
 
     auto root = make_unique<root_node>("");
@@ -265,14 +289,14 @@ void load_modules() {
 
     char buf[4096];
     LOGI("* Loading modules\n");
-    for (const auto &m : *module_list) {
-        const char *module = m.name.data();
-        char *b = buf + ssprintf(buf, sizeof(buf), "%s/" MODULEMNT "/%s/", get_magisk_tmp(), module);
+    for (const auto &m : module_list) {
+        char *b = buf + ssprintf(buf, sizeof(buf), "%s/" MODULEMNT "/%.*s/",
+                                 get_magisk_tmp(), (int) m.name.size(), m.name.data());
 
         // Read props
         strcpy(b, "system.prop");
         if (access(buf, F_OK) == 0) {
-            LOGI("%s: loading [system.prop]\n", module);
+            LOGI("%.*s: loading [system.prop]\n", (int) m.name.size(), m.name.data());
             // Do NOT go through property service as it could cause boot lock
             load_prop_file(buf, true);
         }
@@ -287,10 +311,10 @@ void load_modules() {
         if (access(buf, F_OK) != 0)
             continue;
 
-        LOGI("%s: loading mount files\n", module);
+        LOGI("%.*s: loading mount files\n", (int) m.name.size(), m.name.data());
         b[-1] = '\0';
         int fd = xopen(buf, O_RDONLY | O_CLOEXEC);
-        system->collect_module_files(module, fd);
+        system->collect_module_files({ m.name.begin(), m.name.end() }, fd);
         close(fd);
     }
     if (get_magisk_tmp() != "/sbin"sv || !str_contains(getenv("PATH") ?: "", "/sbin")) {
@@ -328,9 +352,6 @@ void load_modules() {
         root->prepare();
         root->mount();
     }
-
-    // cleanup mounts
-    clean_mounts();
 }
 
 /************************
@@ -379,8 +400,9 @@ static void foreach_module(Func fn) {
     }
 }
 
-static void collect_modules(bool open_zygisk) {
-    foreach_module([=](int dfd, dirent *entry, int modfd) {
+static rust::Vec<ModuleInfo> collect_modules(bool zygisk_enabled, bool open_zygisk) {
+    rust::Vec<ModuleInfo> modules;
+    foreach_module([&](int dfd, dirent *entry, int modfd) {
         if (faccessat(modfd, "remove", F_OK, 0) == 0) {
             LOGI("%s: remove\n", entry->d_name);
             auto uninstaller = MODULEROOT + "/"s + entry->d_name + "/uninstall.sh";
@@ -394,7 +416,7 @@ static void collect_modules(bool open_zygisk) {
         if (faccessat(modfd, "disable", F_OK, 0) == 0)
             return;
 
-        module_info info;
+        ModuleInfo info{{}, -1, -1};
         if (zygisk_enabled) {
             // Riru and its modules are not compatible with zygisk
             if (entry->d_name == "riru-core"sv || faccessat(modfd, "riru", F_OK, 0) == 0) {
@@ -404,11 +426,13 @@ static void collect_modules(bool open_zygisk) {
             if (open_zygisk) {
 #if defined(__arm__)
                 info.z32 = openat(modfd, "zygisk/armeabi-v7a.so", O_RDONLY | O_CLOEXEC);
+                info.z64 = -1;
 #elif defined(__aarch64__)
                 info.z32 = openat(modfd, "zygisk/armeabi-v7a.so", O_RDONLY | O_CLOEXEC);
                 info.z64 = openat(modfd, "zygisk/arm64-v8a.so", O_RDONLY | O_CLOEXEC);
 #elif defined(__i386__)
                 info.z32 = openat(modfd, "zygisk/x86.so", O_RDONLY | O_CLOEXEC);
+                info.z64 = -1;
 #elif defined(__x86_64__)
                 info.z32 = openat(modfd, "zygisk/x86.so", O_RDONLY | O_CLOEXEC);
                 info.z64 = openat(modfd, "zygisk/x86_64.so", O_RDONLY | O_CLOEXEC);
@@ -428,7 +452,7 @@ static void collect_modules(bool open_zygisk) {
             }
         }
         info.name = entry->d_name;
-        module_list->push_back(info);
+        modules.push_back(std::move(info));
     });
     if (zygisk_enabled) {
         bool use_memfd = true;
@@ -448,23 +472,22 @@ static void collect_modules(bool open_zygisk) {
             }
             return fd;
         };
-        std::for_each(module_list->begin(), module_list->end(), [&](module_info &info) {
+        std::for_each(modules.begin(),modules.end(), [&](ModuleInfo &info) {
             info.z32 = convert_to_memfd(info.z32);
-#if defined(__LP64__)
             info.z64 = convert_to_memfd(info.z64);
-#endif
         });
     }
+    return modules;
 }
 
-void handle_modules() {
+rust::Vec<ModuleInfo> MagiskD::handle_modules() const noexcept {
+    bool zygisk = zygisk_enabled();
     prepare_modules();
-    collect_modules(false);
-    exec_module_scripts("post-fs-data");
-
+    exec_module_scripts("post-fs-data", collect_modules(zygisk, false));
     // Recollect modules (module scripts could remove itself)
-    module_list->clear();
-    collect_modules(true);
+    auto list = collect_modules(zygisk, true);
+    load_modules(zygisk, list);
+    return list;
 }
 
 static int check_rules_dir(char *buf, size_t sz) {
@@ -503,11 +526,4 @@ void remove_modules() {
         }
     });
     rm_rf(MODULEROOT);
-}
-
-void exec_module_scripts(const char *stage) {
-    vector<string_view> module_names;
-    std::transform(module_list->begin(), module_list->end(), std::back_inserter(module_names),
-        [](const module_info &info) -> string_view { return info.name; });
-    exec_module_scripts(stage, module_names);
 }

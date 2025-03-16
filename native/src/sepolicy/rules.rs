@@ -1,6 +1,5 @@
-use crate::{ffi::Xperm, sepolicy, SepolicyMagisk};
+use crate::{ffi::Xperm, SePolicy};
 use base::{set_log_level_state, LogLevel};
-use std::pin::Pin;
 
 macro_rules! rules {
     (@args all) => {
@@ -38,7 +37,7 @@ macro_rules! rules {
     };
     (@stmt $self:ident) => {};
     (@stmt $self:ident $action:ident($($args:tt),*); $($res:tt)*) => {
-        $self.as_mut().$action($(rules!(@args $args)),*);
+        $self.$action($(rules!(@args $args)),*);
         rules!{@stmt $self $($res)* }
     };
     (use $self:ident; $($res:tt)*) => {{
@@ -46,8 +45,8 @@ macro_rules! rules {
     }};
 }
 
-impl SepolicyMagisk for sepolicy {
-    fn magisk_rules(mut self: Pin<&mut Self>) {
+impl SePolicy {
+    pub fn magisk_rules(&mut self) {
         // Temp suppress warnings
         set_log_level_state(LogLevel::Warn, false);
         rules! {
@@ -101,15 +100,21 @@ impl SepolicyMagisk for sepolicy {
                 "system_app", "priv_app", "untrusted_app", "untrusted_app_all"],
                 [proc], ["unix_stream_socket"], ["connectto", "getopt"]);
 
-            // For tmpfs overlay on 2SI. We allow all domains to access tmpfs files.
-            allow(["domain"], ["tmpfs"], ["file"], all);
+            // Let selected domains access tmpfs files
+            // For tmpfs overlay on 2SI, Zygisk on lower Android versions and AVD scripts
+            allow(["init", "zygote", "shell"], ["tmpfs"], ["file"], all);
+
+            // Allow magiskinit daemon to log to kmsg
+            allow(["kernel"], ["rootfs", "tmpfs"], ["chr_file"], ["write"]);
 
             // Allow magiskinit daemon to handle mock selinuxfs
-            allow(["kernel"], ["tmpfs"], ["fifo_file"], ["write"]);
+            allow(["kernel"], ["tmpfs"], ["fifo_file"], ["open", "read", "write"]);
 
             // For relabelling files
             allow(["rootfs"], ["labeledfs", "tmpfs"], ["filesystem"], ["associate"]);
             allow([file], ["pipefs", "devpts"], ["filesystem"], ["associate"]);
+            allow(["kernel"], all, ["file"], ["relabelto"]);
+            allow(["kernel"], ["tmpfs"], ["file"], ["relabelfrom"]);
 
             // Let init transit to SEPOL_PROC_DOMAIN
             allow(["kernel"], ["kernel"], ["process"], ["setcurrent"]);
@@ -135,7 +140,7 @@ impl SepolicyMagisk for sepolicy {
         }
 
         #[cfg(any())]
-        self.as_mut().strip_dontaudit();
+        self.strip_dontaudit();
 
         set_log_level_state(LogLevel::Warn, true);
     }

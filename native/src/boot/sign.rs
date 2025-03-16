@@ -157,20 +157,32 @@ struct Signer {
 impl Signer {
     fn from_private_key(key: &[u8]) -> LoggedResult<Signer> {
         let digest: Box<dyn DynDigest>;
-        let key = if let Ok(rsa) = RsaPrivateKey::from_pkcs8_der(key) {
-            digest = Box::<Sha256>::default();
-            SigningKey::SHA256withRSA(RsaSigningKey::<Sha256>::new(rsa))
-        } else if let Ok(ec) = P256SigningKey::from_pkcs8_der(key) {
-            digest = Box::<Sha256>::default();
-            SigningKey::SHA256withECDSA(ec)
-        } else if let Ok(ec) = P384SigningKey::from_pkcs8_der(key) {
-            digest = Box::<Sha384>::default();
-            SigningKey::SHA384withECDSA(ec)
-        } else if let Ok(ec) = P521SigningKey::from_pkcs8_der(key) {
-            digest = Box::<Sha512>::default();
-            SigningKey::SHA521withECDSA(ec)
-        } else {
-            return Err(log_err!("Unsupported private key"));
+        let key = match RsaPrivateKey::from_pkcs8_der(key) {
+            Ok(rsa) => {
+                digest = Box::<Sha256>::default();
+                SigningKey::SHA256withRSA(RsaSigningKey::<Sha256>::new(rsa))
+            }
+            _ => match P256SigningKey::from_pkcs8_der(key) {
+                Ok(ec) => {
+                    digest = Box::<Sha256>::default();
+                    SigningKey::SHA256withECDSA(ec)
+                }
+                _ => match P384SigningKey::from_pkcs8_der(key) {
+                    Ok(ec) => {
+                        digest = Box::<Sha384>::default();
+                        SigningKey::SHA384withECDSA(ec)
+                    }
+                    _ => match P521SigningKey::from_pkcs8_der(key) {
+                        Ok(ec) => {
+                            digest = Box::<Sha512>::default();
+                            SigningKey::SHA521withECDSA(ec)
+                        }
+                        _ => {
+                            return Err(log_err!("Unsupported private key"));
+                        }
+                    },
+                },
+            },
         };
         Ok(Signer { digest, key })
     }
@@ -254,7 +266,7 @@ impl BootSignature {
 }
 
 pub fn verify_boot_image(img: &BootImage, cert: *const c_char) -> bool {
-    fn inner(img: &BootImage, cert: *const c_char) -> LoggedResult<()> {
+    let res: LoggedResult<()> = try {
         let tail = img.tail();
         // Don't use BootSignature::from_der because tail might have trailing zeros
         let mut reader = SliceReader::new(tail)?;
@@ -268,9 +280,8 @@ pub fn verify_boot_image(img: &BootImage, cert: *const c_char) -> bool {
             Err(e) => Err(e)?,
         };
         sig.verify(img.payload())?;
-        Ok(())
-    }
-    inner(img, cert).is_ok()
+    };
+    res.is_ok()
 }
 
 enum Bytes {
@@ -296,12 +307,7 @@ pub fn sign_boot_image(
     cert: *const c_char,
     key: *const c_char,
 ) -> Vec<u8> {
-    fn inner(
-        payload: &[u8],
-        name: *const c_char,
-        cert: *const c_char,
-        key: *const c_char,
-    ) -> LoggedResult<Vec<u8>> {
+    let res: LoggedResult<Vec<u8>> = try {
         // Process arguments
         let name = unsafe { Utf8CStr::from_ptr(name) }?;
         let cert = match unsafe { Utf8CStr::from_ptr(cert) } {
@@ -337,7 +343,7 @@ pub fn sign_boot_image(
             authenticated_attributes: attr,
             signature: OctetString::new(sig)?,
         };
-        sig.to_der().log()
-    }
-    inner(payload, name, cert, key).unwrap_or_default()
+        sig.to_der()?
+    };
+    res.unwrap_or_default()
 }

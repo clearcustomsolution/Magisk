@@ -18,12 +18,9 @@ LOCAL_SRC_FILES := \
     core/applets.cpp \
     core/magisk.cpp \
     core/daemon.cpp \
-    core/bootstages.cpp \
-    core/socket.cpp \
-    core/db.cpp \
-    core/package.cpp \
     core/scripting.cpp \
     core/selinux.cpp \
+    core/sqlite.cpp \
     core/module.cpp \
     core/thread.cpp \
     core/core-rs.cpp \
@@ -31,9 +28,7 @@ LOCAL_SRC_FILES := \
     core/su/su.cpp \
     core/su/connect.cpp \
     core/su/pts.cpp \
-    core/su/su_daemon.cpp \
     core/zygisk/entry.cpp \
-    core/zygisk/main.cpp \
     core/zygisk/module.cpp \
     core/zygisk/hook.cpp \
     core/deny/cli.cpp \
@@ -68,11 +63,9 @@ LOCAL_STATIC_LIBRARIES := \
     libinit-rs
 
 LOCAL_SRC_FILES := \
-    init/init.cpp \
     init/mount.cpp \
     init/rootdir.cpp \
     init/getinfo.cpp \
-    init/twostage.cpp \
     init/selinux.cpp \
     init/init-rs.cpp
 
@@ -80,6 +73,7 @@ LOCAL_LDFLAGS := -static
 
 ifdef B_CRT0
 LOCAL_STATIC_LIBRARIES += crt0
+LOCAL_LDFLAGS += -Wl,--defsym=vfprintf=tiny_vfprintf
 endif
 
 include $(BUILD_EXECUTABLE)
@@ -94,8 +88,6 @@ LOCAL_STATIC_LIBRARIES := \
     libbase \
     liblzma \
     liblz4 \
-    libbz2 \
-    libz \
     libzopfli \
     libboot-rs
 
@@ -125,8 +117,6 @@ LOCAL_STATIC_LIBRARIES := \
     libbase \
     libpolicy \
     libpolicy-rs
-
-LOCAL_SRC_FILES := sepolicy/main.cpp
 
 include $(BUILD_EXECUTABLE)
 
@@ -169,6 +159,7 @@ LOCAL_SRC_FILES := \
     sepolicy/policy-rs.cpp
 include $(BUILD_STATIC_LIBRARY)
 
-include src/Android-rs.mk
-include src/base/Android.mk
-include src/external/Android.mk
+CWD := $(LOCAL_PATH)
+include $(CWD)/Android-rs.mk
+include $(CWD)/base/Android.mk
+include $(CWD)/external/Android.mk

@@ -20,8 +20,8 @@ use base::libc::{
     S_IROTH, S_IRUSR, S_IWGRP, S_IWOTH, S_IWUSR, S_IXGRP, S_IXOTH, S_IXUSR,
 };
 use base::{
-    log_err, map_args, BytesExt, EarlyExitExt, FsPath, LoggedResult, MappedFile, ResultExt,
-    Utf8CStr, Utf8CStrBufArr, Utf8CStrWrite, WriteExt,
+    cstr_buf, log_err, map_args, BytesExt, EarlyExitExt, FsPath, LoggedResult, MappedFile,
+    ResultExt, Utf8CStr, Utf8CStrBuf, WriteExt,
 };
 
 use crate::check_env;
@@ -344,7 +344,7 @@ impl Cpio {
         let out = Utf8CStr::from_string(out);
         let out = FsPath::from(out);
 
-        let mut buf = Utf8CStrBufArr::default();
+        let mut buf = cstr_buf::default();
 
         // Make sure its parent directories exist
         if out.parent(&mut buf) {
@@ -746,8 +746,7 @@ impl Display for CpioEntry {
             Size::from_bytes(self.data.len())
                 .format()
                 .with_style(Style::Abbreviated)
-                .with_base(Base::Base10)
-                .to_string(),
+                .with_base(Base::Base10),
             self.rdevmajor,
             self.rdevminor,
         )
@@ -755,9 +754,9 @@ impl Display for CpioEntry {
 }
 
 pub fn cpio_commands(argc: i32, argv: *const *const c_char) -> bool {
-    fn inner(argc: i32, argv: *const *const c_char) -> LoggedResult<()> {
+    let res: LoggedResult<()> = try {
         if argc < 1 {
-            return Err(log_err!("No arguments"));
+            Err(log_err!("No arguments"))?;
         }
 
         let cmds = map_args(argc, argv)?;
@@ -807,7 +806,7 @@ pub fn cpio_commands(argc: i32, argv: *const *const c_char) -> bool {
                 CpioAction::Add(Add { mode, path, file }) => cpio.add(*mode, path, file)?,
                 CpioAction::Extract(Extract { paths }) => {
                     if !paths.is_empty() && paths.len() != 2 {
-                        return Err(log_err!("invalid arguments"));
+                        Err(log_err!("invalid arguments"))?;
                     }
                     let mut it = paths.iter_mut();
                     cpio.extract(it.next(), it.next())?;
@@ -819,10 +818,8 @@ pub fn cpio_commands(argc: i32, argv: *const *const c_char) -> bool {
             };
         }
         cpio.dump(file)?;
-        Ok(())
-    }
-    inner(argc, argv)
-        .log_with_msg(|w| w.write_str("Failed to process cpio"))
+    };
+    res.log_with_msg(|w| w.write_str("Failed to process cpio"))
         .is_ok()
 }
 

@@ -1,7 +1,10 @@
 #![feature(format_args_nl)]
 #![feature(btree_extract_if)]
 #![feature(iter_intersperse)]
+#![feature(try_blocks)]
 
+pub use libz_rs_sys::*;
+pub use libbz2_rs_sys::*;
 pub use base;
 use cpio::cpio_commands;
 use dtb::dtb_commands;
@@ -21,6 +24,14 @@ mod sign;
 
 #[cxx::bridge]
 pub mod ffi {
+    unsafe extern "C++" {
+        include!("../base/include/base.hpp");
+
+        #[namespace = "rust"]
+        #[cxx_name = "Utf8CStr"]
+        type Utf8CStrRef<'a> = base::ffi::Utf8CStrRef<'a>;
+    }
+
     unsafe extern "C++" {
         include!("compress.hpp");
         fn decompress(buf: &[u8], fd: i32) -> bool;
@@ -51,10 +62,10 @@ pub mod ffi {
     #[namespace = "rust"]
     #[allow(unused_unsafe)]
     extern "Rust" {
-        unsafe fn extract_boot_from_payload(
-            partition: *const c_char,
-            in_path: *const c_char,
-            out_path: *const c_char,
+        fn extract_boot_from_payload(
+            partition: Utf8CStrRef,
+            in_path: Utf8CStrRef,
+            out_path: Utf8CStrRef,
         ) -> bool;
         unsafe fn cpio_commands(argc: i32, argv: *const *const c_char) -> bool;
         unsafe fn verify_boot_image(img: &BootImage, cert: *const c_char) -> bool;
@@ -70,5 +81,5 @@ pub mod ffi {
 
 #[inline(always)]
 pub(crate) fn check_env(env: &str) -> bool {
-    env::var(env).map_or(false, |var| var == "true")
+    env::var(env).is_ok_and(|var| var == "true")
 }

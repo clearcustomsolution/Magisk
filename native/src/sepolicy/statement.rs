@@ -1,10 +1,10 @@
 use std::fmt::{Display, Formatter, Write};
 use std::io::stderr;
-use std::{iter::Peekable, pin::Pin, vec::IntoIter};
+use std::{iter::Peekable, vec::IntoIter};
 
-use base::{error, warn, FmtAdaptor};
 use crate::ffi::Xperm;
-use crate::sepolicy;
+use crate::SePolicy;
+use base::{error, warn, FmtAdaptor};
 
 pub enum Token<'a> {
     AL,
@@ -23,7 +23,6 @@ pub enum Token<'a> {
     TC,
     TM,
     GF,
-    IO,
     LB,
     RB,
     CM,
@@ -201,13 +200,22 @@ fn parse_xperms<'a>(tokens: &mut Tokens<'a>) -> ParseResult<'a, Vec<Xperm>> {
     Ok(xperms)
 }
 
+fn match_string<'a>(tokens: &mut Tokens<'a>, pattern: &str) -> ParseResult<'a, ()> {
+    if let Some(Token::ID(s)) = tokens.next() {
+        if s == pattern {
+            return Ok(());
+        }
+    }
+    Err(ParseError::General)
+}
+
 //     statement ::= AL sterm(s) sterm(t) sterm(c) sterm(p) { sepolicy.allow(s, t, c, p); };
 //     statement ::= DN sterm(s) sterm(t) sterm(c) sterm(p) { sepolicy.deny(s, t, c, p); };
 //     statement ::= AA sterm(s) sterm(t) sterm(c) sterm(p) { sepolicy.auditallow(s, t, c, p); };
 //     statement ::= DA sterm(s) sterm(t) sterm(c) sterm(p) { sepolicy.dontaudit(s, t, c, p); };
-//     statement ::= AX sterm(s) sterm(t) sterm(c) IO xperms(p) { sepolicy.allowxperm(s, t, c, p); };
-//     statement ::= AY sterm(s) sterm(t) sterm(c) IO xperms(p) { sepolicy.auditallowxperm(s, t, c, p); };
-//     statement ::= DX sterm(s) sterm(t) sterm(c) IO xperms(p) { sepolicy.dontauditxperm(s, t, c, p); };
+//     statement ::= AX sterm(s) sterm(t) sterm(c) ID(i) xperms(p) { sepolicy.allowxperm(s, t, c, p); };
+//     statement ::= AY sterm(s) sterm(t) sterm(c) ID(i) xperms(p) { sepolicy.auditallowxperm(s, t, c, p); };
+//     statement ::= DX sterm(s) sterm(t) sterm(c) ID(i) xperms(p) { sepolicy.dontauditxperm(s, t, c, p); };
 //     statement ::= PM sterm(t) { sepolicy.permissive(t); };
 //     statement ::= EF sterm(t) { sepolicy.enforce(t); };
 //     statement ::= TA term(t) term(a) { sepolicy.typeattribute(t, a); };
@@ -219,10 +227,7 @@ fn parse_xperms<'a>(tokens: &mut Tokens<'a>) -> ParseResult<'a, Vec<Xperm>> {
 //     statement ::= TC ID(s) ID(t) ID(c) ID(d) { sepolicy.type_change(s, t, c, d); };
 //     statement ::= TM ID(s) ID(t) ID(c) ID(d) { sepolicy.type_member(s, t, c, d);};
 //     statement ::= GF ID(s) ID(t) ID(c) { sepolicy.genfscon(s, t, c); };
-fn exec_statement<'a>(
-    sepolicy: Pin<&mut sepolicy>,
-    tokens: &mut Tokens<'a>,
-) -> ParseResult<'a, ()> {
+fn exec_statement<'a>(sepolicy: &mut SePolicy, tokens: &mut Tokens<'a>) -> ParseResult<'a, ()> {
     let action = match tokens.next() {
         Some(token) => token,
         _ => Err(ParseError::ShowHelp)?,
@@ -259,11 +264,8 @@ fn exec_statement<'a>(
                 let s = parse_sterm(tokens)?;
                 let t = parse_sterm(tokens)?;
                 let c = parse_sterm(tokens)?;
-                let p = if matches!(tokens.next(), Some(Token::IO)) {
-                    parse_xperms(tokens)?
-                } else {
-                    throw!()
-                };
+                match_string(tokens, "ioctl")?;
+                let p = parse_xperms(tokens)?;
                 check_additional_args(tokens)?;
                 match action {
                     Token::AX => sepolicy.allowxperm(s, t, c, p),
@@ -396,7 +398,6 @@ fn extract_token<'a>(s: &'a str, tokens: &mut Vec<Token<'a>>) {
         "type_change" => tokens.push(Token::TC),
         "type_member" => tokens.push(Token::TM),
         "genfscon" => tokens.push(Token::GF),
-        "ioctl" => tokens.push(Token::IO),
         "*" => tokens.push(Token::ST),
         "" => {}
         _ => {
@@ -440,16 +441,18 @@ fn tokenize_statement(statement: &str) -> Vec<Token> {
     tokens
 }
 
-pub fn parse_statement(sepolicy: Pin<&mut sepolicy>, statement: &str) {
-    let statement = statement.trim();
-    if statement.is_empty() || statement.starts_with('#') {
-        return;
-    }
-    let mut tokens = tokenize_statement(statement).into_iter().peekable();
-    let result = exec_statement(sepolicy, &mut tokens);
-    if let Err(e) = result {
-        warn!("Syntax error in: \"{}\"", statement);
-        error!("Hint: {}", e);
+impl SePolicy {
+    pub fn parse_statement(self: &mut SePolicy, statement: &str) {
+        let statement = statement.trim();
+        if statement.is_empty() || statement.starts_with('#') {
+            return;
+        }
+        let mut tokens = tokenize_statement(statement).into_iter().peekable();
+        let result = exec_statement(self, &mut tokens);
+        if let Err(e) = result {
+            warn!("Syntax error in: \"{}\"", statement);
+            error!("Hint: {}", e);
+        }
     }
 }
 
@@ -473,7 +476,6 @@ impl Display for Token<'_> {
             Token::TC => f.write_str("type_change"),
             Token::TM => f.write_str("type_member"),
             Token::GF => f.write_str("genfscon"),
-            Token::IO => f.write_str("ioctl"),
             Token::LB => f.write_char('{'),
             Token::RB => f.write_char('}'),
             Token::CM => f.write_char(','),
@@ -595,7 +597,9 @@ allowxperm source target class ioctl *
     )
 }
 
-pub fn print_statement_help() {
-    format_statement_help(&mut FmtAdaptor(&mut stderr())).ok();
-    eprintln!();
+impl SePolicy {
+    pub fn print_statement_help() {
+        format_statement_help(&mut FmtAdaptor(&mut stderr())).ok();
+        eprintln!();
+    }
 }
